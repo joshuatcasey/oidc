@@ -1,11 +1,15 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/MicahParks/keyfunc"
@@ -55,7 +59,7 @@ func init() {
 		panic(err)
 	}
 
-	retrieveCmd.Flags().StringVar(&outputFormat, "outputFormat", "claims", "Output format. Defaults to 'claims'. Choose from: ['claims', 'raw']")
+	retrieveCmd.Flags().StringVar(&outputFormat, "outputFormat", "claims", "Output format. Defaults to 'claims'. Choose from: ['claims', 'raw', 'json']")
 	retrieveCmd.Flags().IntVar(&port, "port", 8080, "Port for the CLI to receive a code")
 	retrieveCmd.Flags().StringVar(&redirectUri, "redirectUri", "http://localhost:8080", "Redirect URI for the client")
 }
@@ -141,11 +145,31 @@ func translateTokenToClaims(jwtChan chan string, wg *sync.WaitGroup, provider *o
 	switch {
 	case outputFormat == "claims":
 		printAsClaims(token)
+	case outputFormat == "json":
+		printClaimsAsJson(stringToken)
 	case outputFormat == "raw":
 		fmt.Println(stringToken)
 	default:
 		fmt.Printf("unknown outputFormat=%s\n", outputFormat)
 	}
+}
+
+func printClaimsAsJson(token string) {
+	claims := strings.Split(token, ".")[1]
+
+	decodedClaims, err := base64.RawURLEncoding.DecodeString(claims)
+	if err != nil {
+		panic(err)
+	}
+
+	buffer := bytes.NewBuffer(nil)
+
+	err = json.Indent(buffer, decodedClaims, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(buffer.String())
 }
 
 func printAsClaims(token *jwt.Token) {

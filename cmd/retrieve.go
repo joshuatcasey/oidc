@@ -59,7 +59,7 @@ func init() {
 		panic(err)
 	}
 
-	retrieveCmd.Flags().StringVar(&outputFormat, "outputFormat", "claims", "Output format. Defaults to 'claims'. Choose from: ['claims', 'raw', 'json']")
+	retrieveCmd.Flags().StringVar(&outputFormat, "outputFormat", "claims", "Output format. Defaults to 'claims'. Choose from: ['claims', 'raw', 'json', 'jwt.io']")
 	retrieveCmd.Flags().IntVar(&port, "port", 8080, "Port for the CLI to receive a code")
 	retrieveCmd.Flags().StringVar(&redirectUri, "redirectUri", "http://localhost:8080", "Redirect URI for the client")
 }
@@ -149,6 +149,8 @@ func translateTokenToClaims(jwtChan chan string, wg *sync.WaitGroup, provider *o
 		printClaimsAsJson(stringToken)
 	case outputFormat == "raw":
 		fmt.Println(stringToken)
+	case outputFormat == "jwt.io":
+		fmt.Printf("https://jwt.io/#debugger-io?token=%s\n", stringToken)
 	default:
 		fmt.Printf("unknown outputFormat=%s\n", outputFormat)
 	}

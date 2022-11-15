@@ -1,21 +1,18 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 
 	"github.com/MicahParks/keyfunc"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/google/uuid"
+	"github.com/joshuatcasey/oidc/printers"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
@@ -142,46 +139,18 @@ func translateTokenToClaims(jwtChan chan string, wg *sync.WaitGroup, provider *o
 		panic("token not valid")
 	}
 
-	switch {
-	case outputFormat == "claims":
-		printAsClaims(token)
-	case outputFormat == "json":
-		printClaimsAsJson(stringToken)
-	case outputFormat == "raw":
-		fmt.Println(stringToken)
-	case outputFormat == "jwt.io":
-		fmt.Printf("https://jwt.io/#debugger-io?token=%s\n", stringToken)
-	default:
+	tokenPrinters := make(map[string]printers.Printer)
+	tokenPrinters["claims"] = printers.PrintAsClaims
+	tokenPrinters["json"] = printers.PrintClaimsAsJson
+	tokenPrinters["raw"] = printers.PrintRaw
+	tokenPrinters["jwt.io"] = printers.PrintJwtIo
+
+	if tokenPrinter, ok := tokenPrinters[outputFormat]; ok {
+		if err = tokenPrinter(token, stringToken); err != nil {
+			panic(fmt.Errorf("cannot print as %s: %w", outputFormat, err))
+		}
+	} else {
 		fmt.Printf("unknown outputFormat=%s\n", outputFormat)
-	}
-}
-
-func printClaimsAsJson(token string) {
-	claims := strings.Split(token, ".")[1]
-
-	decodedClaims, err := base64.RawURLEncoding.DecodeString(claims)
-	if err != nil {
-		panic(err)
-	}
-
-	buffer := bytes.NewBuffer(nil)
-
-	err = json.Indent(buffer, decodedClaims, "", "  ")
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Println(buffer.String())
-}
-
-func printAsClaims(token *jwt.Token) {
-	tokenClaims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		panic("cannot access claims from token")
-	}
-
-	for key, value := range tokenClaims {
-		fmt.Printf("%s=%+v\n", key, value)
 	}
 }
 

@@ -133,7 +133,11 @@ func retrieve(_ *cobra.Command, _ []string) {
 
 func translateTokenToClaims(jwtChan chan string, wg *sync.WaitGroup, provider *oidc.Provider) {
 	defer wg.Done()
-	stringToken := <-jwtChan
+
+	stringToken, ok := <-jwtChan
+	if !ok {
+		return
+	}
 
 	var oidcConfigClaims struct {
 		JwksUri string `json:"jwks_uri"`
@@ -176,7 +180,11 @@ func translateTokenToClaims(jwtChan chan string, wg *sync.WaitGroup, provider *o
 func exchangeForToken(codeChan chan string, jwtChan chan string, wg *sync.WaitGroup, provider *oidc.Provider, ctx context.Context) {
 	defer wg.Done()
 
-	code := <-codeChan
+	code, ok := <-codeChan
+	if !ok {
+		close(jwtChan)
+		return
+	}
 
 	// Configure an OpenID Connect aware OAuth2 client.
 	oauth2Config := oauth2.Config{
@@ -216,6 +224,15 @@ func receiveCodeFunc(codeChan chan string, wg *sync.WaitGroup) http.HandlerFunc 
 		query, err := url.ParseQuery(req.URL.RawQuery)
 		if err != nil {
 			return
+		}
+
+		if query.Has("error") || query.Has("error_description") || query.Has("error_uri") {
+			fmt.Printf("error=%s\n", query.Get("error"))
+			fmt.Printf("error_description=%s\n", query.Get("error_description"))
+			fmt.Printf("error_uri=%s\n", query.Get("error_uri"))
+
+			close(codeChan)
+			wg.Done()
 		}
 
 		if query.Has("code") {

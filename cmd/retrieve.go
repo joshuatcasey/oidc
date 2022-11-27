@@ -45,19 +45,19 @@ func init() {
 	retrieveCmd.Flags().StringVar(&issuerUri, "issuerUri", "", "Issuer URI")
 	err := retrieveCmd.MarkFlagRequired("issuerUri")
 	if err != nil {
-		panic(err)
+		log.Fatal(fmt.Errorf("could not mark issuerUri as required: %w\n", err))
 	}
 
 	retrieveCmd.Flags().StringVar(&clientId, "clientId", "", "Client ID")
 	err = retrieveCmd.MarkFlagRequired("clientId")
 	if err != nil {
-		panic(err)
+		log.Fatal(fmt.Errorf("could not mark clientId as required: %w\n", err))
 	}
 
 	retrieveCmd.Flags().StringVar(&clientSecret, "clientSecret", "", "Client Secret")
 	err = retrieveCmd.MarkFlagRequired("clientSecret")
 	if err != nil {
-		panic(err)
+		log.Fatal(fmt.Errorf("could not mark clientSecret as required: %w\n", err))
 	}
 
 	retrieveCmd.Flags().StringVar(&outputFormat, "outputFormat", "claims", "Output format. Defaults to 'claims'. Choose from: ['claims', 'raw', 'json', 'jwt.io']")
@@ -75,12 +75,12 @@ func retrieve(_ *cobra.Command, _ []string) {
 	ctx := context.Background()
 	provider, err := oidc.NewProvider(ctx, issuerUri)
 	if err != nil {
-		panic(err)
+		log.Fatal(fmt.Errorf("unable to create OIDC provider: %w", err))
 	}
 
 	authorizationUrl, err := url.Parse(provider.Endpoint().AuthURL)
 	if err != nil {
-		panic(err)
+		log.Fatal(fmt.Errorf("unable to parse authorizationUrl [%s]: %w", provider.Endpoint().AuthURL, err))
 	}
 
 	authorizationParams := url.Values{}
@@ -113,7 +113,9 @@ func retrieve(_ *cobra.Command, _ []string) {
 	go func() {
 		err = server.ListenAndServe()
 		if err != nil {
-			panic(err)
+			close(codeChan)
+			close(jwtChan)
+			log.Fatal(fmt.Errorf("unable to parse authorizationUrl [%s]: %w", provider.Endpoint().AuthURL, err))
 		}
 	}()
 
@@ -123,9 +125,10 @@ func retrieve(_ *cobra.Command, _ []string) {
 	wg.Add(1)
 	go translateTokenToClaims(jwtChan, wg, provider)
 
-	err = browser.OpenURL(authorizationUrl.String())
+	authorizationUrlStr := authorizationUrl.String()
+	err = browser.OpenURL(authorizationUrlStr)
 	if err != nil {
-		panic(err)
+		log.Fatal(fmt.Errorf("unable to open url [%s]: %w", authorizationUrlStr, err))
 	}
 
 	wg.Wait()
@@ -144,7 +147,8 @@ func translateTokenToClaims(jwtChan chan string, wg *sync.WaitGroup, provider *o
 	}
 
 	if err := provider.Claims(&oidcConfigClaims); err != nil || oidcConfigClaims.JwksUri == "" {
-		panic(fmt.Errorf("cannot find jwks_uri: %w", err))
+		fmt.Print(fmt.Errorf("cannot find jwks_uri: %w", err))
+		return
 	}
 
 	// Create the JWKS from the resource at the given URL.
@@ -155,11 +159,13 @@ func translateTokenToClaims(jwtChan chan string, wg *sync.WaitGroup, provider *o
 
 	token, err := jwt.Parse(stringToken, jwks.Keyfunc)
 	if err != nil {
-		panic(err)
+		fmt.Print(fmt.Errorf("unable to parse JWT"))
+		return
 	}
 
 	if !token.Valid {
-		panic("token not valid")
+		fmt.Printf("token not valid\n")
+		return
 	}
 
 	tokenPrinters := make(map[string]printers.Printer)
@@ -168,12 +174,12 @@ func translateTokenToClaims(jwtChan chan string, wg *sync.WaitGroup, provider *o
 	tokenPrinters["raw"] = printers.PrintRaw
 	tokenPrinters["jwt.io"] = printers.PrintJwtIo
 
-	if tokenPrinter, ok := tokenPrinters[outputFormat]; ok {
-		if err = tokenPrinter(token, stringToken); err != nil {
-			panic(fmt.Errorf("cannot print as %s: %w", outputFormat, err))
-		}
-	} else {
+	if tokenPrinter, ok := tokenPrinters[outputFormat]; !ok {
 		fmt.Printf("unknown outputFormat=%s\n", outputFormat)
+		return
+	} else if err = tokenPrinter(token, stringToken); err != nil {
+		fmt.Print(fmt.Errorf("cannot print as %s: %w", outputFormat, err))
+		return
 	}
 }
 
@@ -203,12 +209,16 @@ func exchangeForToken(codeChan chan string, jwtChan chan string, wg *sync.WaitGr
 
 	oauth2Token, err := oauth2Config.Exchange(ctx, code, opts...)
 	if err != nil {
-		panic(err)
+		close(jwtChan)
+		fmt.Print(fmt.Errorf("unable to exchange code for token: %w", err))
+		return
 	}
 
 	rawIDToken, ok := oauth2Token.Extra("id_token").(string)
-	if !ok {
-		panic("no id token")
+	if !ok || rawIDToken == "" {
+		close(jwtChan)
+		fmt.Print(fmt.Errorf("no id_token in the access token response: %w", err))
+		return
 	}
 
 	jwtChan <- rawIDToken
@@ -237,9 +247,13 @@ func receiveCodeFunc(codeChan chan string, wg *sync.WaitGroup) http.HandlerFunc 
 
 		if query.Has("code") {
 			if !query.Has("state") {
-				panic("code must be accompanied by state")
+				fmt.Printf("code must be accompanied by state\n")
+				close(codeChan)
+				wg.Done()
 			} else if state != query.Get("state") {
-				panic("state does not match")
+				fmt.Printf("state does not match\n")
+				close(codeChan)
+				wg.Done()
 			}
 
 			code := query.Get("code")

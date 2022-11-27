@@ -37,6 +37,7 @@ var (
 	outputFormat string
 	usePkce      bool
 	codeVerifier string
+	nonce        = uuid.New().String()
 )
 
 func init() {
@@ -89,6 +90,7 @@ func retrieve(_ *cobra.Command, _ []string) {
 	authorizationParams.Set("redirect_uri", redirectUri)
 	authorizationParams.Set("scope", oidc.ScopeOpenID)
 	authorizationParams.Set("state", state)
+	authorizationParams.Set("nonce", nonce)
 
 	if usePkce {
 		codeVerifier = uuid.New().String() + "-" + uuid.New().String()
@@ -168,6 +170,10 @@ func translateTokenToClaims(jwtChan chan string, wg *sync.WaitGroup, provider *o
 		return
 	}
 
+	if !validateNonce(token) {
+		return
+	}
+
 	tokenPrinters := make(map[string]printers.Printer)
 	tokenPrinters["claims"] = printers.PrintAsClaims
 	tokenPrinters["json"] = printers.PrintClaimsAsJson
@@ -181,6 +187,24 @@ func translateTokenToClaims(jwtChan chan string, wg *sync.WaitGroup, provider *o
 		fmt.Print(fmt.Errorf("cannot print as %s: %w", outputFormat, err))
 		return
 	}
+}
+
+func validateNonce(token *jwt.Token) bool {
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		fmt.Printf("cannot access claims from token\n")
+		return false
+	}
+
+	if nonceClaim, ok := claims["nonce"]; !ok {
+		fmt.Printf("cannot find nonce in the id_token\n")
+		return false
+	} else if nonceClaim != nonce {
+		fmt.Printf("nonce does not match\n")
+		return false
+	}
+
+	return true
 }
 
 func exchangeForToken(codeChan chan string, jwtChan chan string, wg *sync.WaitGroup, provider *oidc.Provider, ctx context.Context) {

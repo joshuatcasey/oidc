@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
@@ -33,6 +35,8 @@ var (
 	redirectUri  string
 	state        = uuid.New().String()
 	outputFormat string
+	usePkce      bool
+	codeVerifier string
 )
 
 func init() {
@@ -59,6 +63,12 @@ func init() {
 	retrieveCmd.Flags().StringVar(&outputFormat, "outputFormat", "claims", "Output format. Defaults to 'claims'. Choose from: ['claims', 'raw', 'json', 'jwt.io']")
 	retrieveCmd.Flags().IntVar(&port, "port", 8080, "Port for the CLI to receive a code")
 	retrieveCmd.Flags().StringVar(&redirectUri, "redirectUri", "http://localhost:8080", "Redirect URI for the client")
+	retrieveCmd.Flags().BoolVar(&usePkce, "pkce", false, "Use PKCE")
+}
+
+func calcSha256(s string) string {
+	b := sha256.Sum256([]byte(s))
+	return base64.RawURLEncoding.EncodeToString(b[:])
 }
 
 func retrieve(_ *cobra.Command, _ []string) {
@@ -79,6 +89,15 @@ func retrieve(_ *cobra.Command, _ []string) {
 	authorizationParams.Set("redirect_uri", redirectUri)
 	authorizationParams.Set("scope", oidc.ScopeOpenID)
 	authorizationParams.Set("state", state)
+
+	if usePkce {
+		codeVerifier = uuid.New().String() + "-" + uuid.New().String()
+		codeChallenge := calcSha256(codeVerifier)
+		codeChallengeMethod := "S256"
+
+		authorizationParams.Set("code_challenge", codeChallenge)
+		authorizationParams.Set("code_challenge_method", codeChallengeMethod)
+	}
 
 	authorizationUrl.RawQuery = authorizationParams.Encode()
 
@@ -168,7 +187,13 @@ func exchangeForToken(codeChan chan string, jwtChan chan string, wg *sync.WaitGr
 		Scopes:       []string{oidc.ScopeOpenID},
 	}
 
-	oauth2Token, err := oauth2Config.Exchange(ctx, code)
+	var opts []oauth2.AuthCodeOption
+
+	if usePkce && codeVerifier != "" {
+		opts = append(opts, oauth2.SetAuthURLParam("code_verifier", codeVerifier))
+	}
+
+	oauth2Token, err := oauth2Config.Exchange(ctx, code, opts...)
 	if err != nil {
 		panic(err)
 	}
